@@ -1,0 +1,3 @@
+spa_Latn
+hin_Deva
+tel_Telu
