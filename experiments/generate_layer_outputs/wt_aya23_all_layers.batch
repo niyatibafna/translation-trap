@@ -1,0 +1,124 @@
+#!/usr/bin/env bash
+
+#SBATCH --job-name=aya_layer_outputs    # create a short name for your job
+#SBATCH --nodes=1                # node count
+#SBATCH --ntasks=1               # total number of tasks across all nodes
+#SBATCH --cpus-per-task=1       # cpu-cores per task (>1 if multi-threaded tasks)
+#SBATCH --gpus-per-node=2                # Total number of gpus
+#SBATCH --partition=nvl          # Name of the partition
+#SBATCH --mem=50G                # Total memory allocated
+#SBATCH --hint=multithread       # we get logical cores (threads) not physical (cores)
+#SBATCH --time=2:00:00          # total run time limit (HH:MM:SS)
+#SBATCH --array=132-359%4            # job array index
+##SBATCH --array=351            # job array index
+#SBATCH --exclude=c001,c003,c005,h12,n04,n06,n05,n08,n16,n10,n11
+#SBATCH --output=slurm_logs_eval/aya238b_wt/layer_%a.out   # output file name
+#SBATCH --error=slurm_logs_eval/aya238b_wt/layer_%a.out    # error file name
+
+echo "### Running $SLURM_JOB_NAME ###"
+
+cd ${SLURM_SUBMIT_DIR}
+
+echo "HOSTNAME: $(hostname)"
+echo
+echo CUDA in ENV:
+env | grep CUDA
+echo
+
+nvidia-smi
+
+source /home/$USER/.bashrc
+
+which python
+conda activate genspace
+which python
+
+set -x
+cd "/home/nbafna1/projects/diagnosing_genspace/"
+
+# lang_pairs=("hin_Deva-fra_Latn" "hin_Deva-mar_Deva")
+# lang_pairs=(
+# "spa_Latn-fra_Latn" "spa_Latn-cmn_Hant" "spa_Latn-mar_Deva" "spa_Latn-tam_Taml" "spa_Latn-swa_Latn" "spa_Latn-mag_Deva" "spa_Latn-cat_Latn" "spa_Latn-uzn_Latn" "spa_Latn-yor_Latn" "spa_Latn-yue_Hant"
+# "hin_Deva-fra_Latn" "hin_Deva-cmn_Hant" "hin_Deva-mar_Deva" "hin_Deva-tam_Taml" "hin_Deva-swa_Latn" "hin_Deva-mag_Deva" "hin_Deva-cat_Latn" "hin_Deva-uzn_Latn" "hin_Deva-yor_Latn" "hin_Deva-yue_Hant"
+# "cmn_Hant-fra_Latn" "cmn_Hant-mar_Deva" "cmn_Hant-tam_Taml" "cmn_Hant-swa_Latn" "cmn_Hant-mag_Deva" "cmn_Hant-cat_Latn" "cmn_Hant-uzn_Latn" "cmn_Hant-yor_Latn" "cmn_Hant-yue_Hant"
+# )
+
+# lang_pairs=(
+# "spa_Latn-tur_Latn" "spa_Latn-hin_Deva" "spa_Latn-ind_Latn" "spa_Latn-pol_Latn" "spa_Latn-ell_Latn" "spa_Latn-eng_Latn" 
+# "hin_Deva-tur_Latn" "hin_Deva-ind_Latn" "hin_Deva-pol_Latn" "hin_Deva-ell_Latn" "hin_Deva-eng_Latn" 
+# "cmn_Hant-tur_Latn" "cmn_Hant-hin_Deva" "cmn_Hant-ind_Latn" "cmn_Hant-pol_Latn" "cmn_Hant-ell_Latn" "cmn_Hant-eng_Latn"
+# )
+# num_lang_pairs=${#lang_pairs[@]}
+# # layers=(-1 -2 -3 -4 -5 -6 -7 -8 -9 -10 -11 -12 -13 -14 -15 -16)
+# layers=(-1 -2 -3 -4 -5 -6 -7 -8 -9 -10)
+
+# lang_pair=${lang_pairs[$SLURM_ARRAY_TASK_ID % $((num_lang_pairs))]}
+# layer=${layers[$SLURM_ARRAY_TASK_ID / $((num_lang_pairs))]}
+# src_lang=${lang_pair%-*}
+# tgt_lang=${lang_pair#*-}
+# echo "Layer: $layer"
+# echo "Src lang: $src_lang"
+# echo "Tgt lang: $tgt_lang"
+
+OUTPUT_DIR=/weka/scratch/dkhasha1/nbafna1/projects/diagnosing_genspace/layer_outputs
+exp_key="aya-23-8b_wt_temp-0"
+
+mapfile -t src_langs < "/home/nbafna1/projects/diagnosing_genspace/utils/task_langs/wt_src_langs.txt"
+mapfile -t tgt_langs < "/home/nbafna1/projects/diagnosing_genspace/utils/task_langs/wt_tgt_langs.txt"
+
+num_tgt_langs=${#tgt_langs[@]}
+
+layers=(-1 -2 -3 -4 -5 -6 -7 -8 -9 -10)
+tgt_lang=${tgt_langs[$SLURM_ARRAY_TASK_ID % $((num_tgt_langs))]}
+layer=${layers[$SLURM_ARRAY_TASK_ID / $((num_tgt_langs))]}
+
+for src_lang in ${src_langs[@]}; do
+  lang_pair="${src_lang}-${tgt_lang}"
+  echo "Src lang: $src_lang"
+  echo "Tgt lang: $tgt_lang"
+  echo "Layer: $layer"
+  echo "Lang pair: $lang_pair"
+  # src_lang=tel_Latn
+  # tgt_lang=ara_Latn
+  # layer=-10
+
+  OUTPUT_DIR_LANG_PAIR=${OUTPUT_DIR}/${exp_key}/${lang_pair}
+  mkdir -p $OUTPUT_DIR_LANG_PAIR
+
+  # If OUTPUT_DIR_LANG_PAIR/generations_per_step_layer_${layer}.jsonl already exists, skip the generation
+  if [ -s "${OUTPUT_DIR_LANG_PAIR}/generations_layer-${layer}.jsonl" ]; then
+    echo "File already exists, skipping generation for $lang_pair"
+    continue
+  fi
+
+# NUM_GPUS=$(nvidia-smi --list-gpus | wc -l)
+# torchrun --nproc_per_node=$NUM_GPUS scripts/generate_translations_beta.py \
+python scripts/get_intermediate_hypotheses.py \
+  --model "CohereLabs/aya-23-8B" \
+  --layer $layer \
+  --output_dir ${OUTPUT_DIR_LANG_PAIR} \
+  --max_words 400 \
+  --src_lang $src_lang \
+  --tgt_lang $tgt_lang \
+  --batch_size 8 \
+  --temperature 0 \
+  --apply_chat_template
+
+done
+
+
+
+## DEBUG:
+# DATA_DIR=/weka/scratch/dkhasha1/nbafna1/data/word_translation_dataset
+# OUTPUT_DIR=/weka/home/nbafna1/projects/diagnosing_genspace
+# LAYER=$1
+# python scripts/generate_translations_beta.py \
+#   --model "CohereLabs/aya-23-8B" \
+#   --layer $1 \
+#   --output_dir ${OUTPUT_DIR} \
+#   --max_words 16 \
+#   --src_lang spa_Latn \
+#   --tgt_lang fra_Latn \
+#   --batch_size 8 \
+#   --temperature 0.3 \
+#   --apply_chat_template

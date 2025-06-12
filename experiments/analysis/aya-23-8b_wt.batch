@@ -1,0 +1,80 @@
+#!/usr/bin/env bash
+
+#SBATCH --job-name=layer_outputs    # create a short name for your job
+#SBATCH --nodes=1                # node count
+#SBATCH --ntasks=1               # total number of tasks across all nodes
+#SBATCH --cpus-per-task=1       # cpu-cores per task (>1 if multi-threaded tasks)
+# #SBATCH --gpus-per-node=1                # Total number of gpus
+#SBATCH --partition=cpu          # Name of the partition
+#SBATCH --mem=10G                # Total memory allocated
+#SBATCH --hint=multithread       # we get logical cores (threads) not physical (cores)
+#SBATCH --time=10:00          # total run time limit (HH:MM:SS)
+#SBATCH --array=0-35            # job array index
+#SBATCH --output=slurm_logs_eval/aya238b_wt/eval_analysis_%a.out   # output file name
+#SBATCH --error=slurm_logs_eval/aya238b_wt/eval_analysis_%a.out    # error file name
+
+echo "### Running $SLURM_JOB_NAME ###"
+
+cd ${SLURM_SUBMIT_DIR}
+
+echo "HOSTNAME: $(hostname)"
+echo
+echo CUDA in ENV:
+env | grep CUDA
+echo
+
+nvidia-smi
+
+source /home/$USER/.bashrc
+
+which python
+conda activate misc
+which python
+
+set -x
+cd "/home/nbafna1/projects/diagnosing_genspace/"
+
+exp_key="aya-23-8b_wt_temp-0"
+
+mapfile -t src_langs < "/home/nbafna1/projects/diagnosing_genspace/utils/task_langs/wt_src_langs.txt"
+mapfile -t tgt_langs < "/home/nbafna1/projects/diagnosing_genspace/utils/task_langs/wt_tgt_langs.txt"
+tgt_lang=${tgt_langs[$SLURM_ARRAY_TASK_ID]}
+# tgt_lang="ara_Arab"
+
+DATA_DIR=/weka/scratch/dkhasha1/nbafna1/projects/diagnosing_genspace/layer_outputs/
+OUTPUT_DIR=/home/nbafna1/projects/diagnosing_genspace/analysis/
+
+for src_lang in "${src_langs[@]}"; do
+    lang_pair="${src_lang}-${tgt_lang}"
+    echo "Src lang: $src_lang"
+    echo "Tgt lang: $tgt_lang"
+    echo "Lang pair: $lang_pair"
+
+    DATA_DIR_LANG_PAIR=$DATA_DIR/$exp_key/${lang_pair}
+    OUTPUT_DIR_LANG_PAIR=$OUTPUT_DIR/${exp_key}/${lang_pair}
+
+    mkdir -p $OUTPUT_DIR_LANG_PAIR
+
+    python scripts/characterizing_intermediate_generations.py \
+        --data_dir ${DATA_DIR_LANG_PAIR} \
+        --output_dir ${OUTPUT_DIR_LANG_PAIR} \
+        --src_lang $src_lang \
+        --tgt_lang $tgt_lang \
+
+done
+
+
+## DEBUG:
+# DATA_DIR=/weka/scratch/dkhasha1/nbafna1/data/word_translation_dataset
+# OUTPUT_DIR=/weka/home/nbafna1/projects/diagnosing_genspace
+# LAYER=$1
+# python scripts/generate_translations_beta.py \
+#   --model "CohereLabs/aya-23-8B" \
+#   --layer $1 \
+#   --output_dir ${OUTPUT_DIR} \
+#   --max_words 16 \
+#   --src_lang spa_Latn \
+#   --tgt_lang fra_Latn \
+#   --batch_size 8 \
+#   --temperature 0.3 \
+#   --apply_chat_template
